@@ -86,4 +86,4 @@ server-state-playground/
 ## 前提
 
 - Node.js v22
-- pnpm
+- pnpm（`corepack enable` で有効化。`package.json` の `packageManager` フィールドに基づき適切なバージョンが自動で使われる）
