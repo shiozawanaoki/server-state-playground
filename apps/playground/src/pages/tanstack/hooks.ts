@@ -49,8 +49,11 @@ export function useTodos(status: TodoStatus | null) {
  * 特定の Todo を1件取得する hook
  *
  * useTodos と同様に queryFn を省略してグローバル defaultQueryFn を利用。
- * enabled: id !== undefined で、id が確定するまでフェッチを停止する（条件付きクエリ）。
- * SWR では useSWR(null) で同じことを実現していた。
+ *
+ * enabled オプション:
+ *   enabled: false のときはフェッチを実行しない。isPending は true（データなし）だが
+ *   isFetching は false（リクエストなし）になる。→ isPending && isFetching で正しく判定可能。
+ *   SWR では useSWR(null) で同じことを実現していた（key=null でフェッチ停止）。
  */
 export function useTodo(id: string | undefined) {
   const { data, isPending, isFetching, error } = useQuery<Todo>({
@@ -78,8 +81,12 @@ export function useTodo(id: string | undefined) {
  * .then(() => {}) で戻り値を void に変換し、呼び出し元の型を統一する。
  */
 export function useCreateTodo() {
-  const queryClient = useQueryClient() // QueryClient インスタンスを取得（キャッシュ操作に使う）
+  // useQueryClient: QueryClient インスタンスを取得し、キャッシュを手動操作する
+  // SWR では useSWRConfig() が同じ役割（mutate 関数の取得元）
+  const queryClient = useQueryClient()
   const mutation = useMutation({
+    // mutationFn: mutate() / mutateAsync() を呼んだときに実行される関数
+    // SWR の useSWRMutation の fetcher に相当
     mutationFn: (data: MutationData) =>
       fakeFetch('/api/todos', {
         method: 'POST',
@@ -89,19 +96,31 @@ export function useCreateTodo() {
         if (!res.ok) throw new Error(String(body.error ?? 'Failed to create'))
         return body
       }),
+    // onSuccess: mutationFn が成功した直後に実行されるコールバック
+    // SWR では trigger() 後に手動で mutate(filter) を呼ぶが、
+    // TanStack Query では onSuccess に書くことで宣言的にキャッシュ無効化できる
     onSuccess: () => queryClient.invalidateQueries({
-      // queryKey[0]（URL）が '/api/todos' で始まる全クエリを無効化
+      // predicate: 各キャッシュエントリ（Query オブジェクト）を受け取り、
+      // true を返したものを「stale」にマーク → 自動で再フェッチが走る
+      // queryKey は常に配列だが要素の型が不定のため typeof チェックが必要
       predicate: (query) =>
         typeof query.queryKey[0] === 'string' &&
         (query.queryKey[0] as string).startsWith('/api/todos'),
     }),
   })
+  // mutateAsync: Promise を返す（await で完了を待てる）。mutate() は void で callback ベース
   const create = (data: MutationData) => mutation.mutateAsync(data).then(() => {})
+  // mutation.isPending: mutationFn 実行中に true。SWR の isMutating に相当
   return { create, isPending: mutation.isPending, error: mutation.error?.message ?? null }
 }
 
 /**
- * Todo を更新する hook（useCreateTodo と同じパターン）
+ * Todo を更新する hook
+ *
+ * useCreateTodo と同じ useMutation + invalidateQueries パターン。
+ * mutationFn 内で id を参照するため、id を hook の引数で受け取る。
+ * SWR: useSWRMutation(`/api/todos/${id}`, updateFetcher) ではキーが URL になるが、
+ * TanStack: useMutation はキーを持たない（invalidateQueries で一括無効化する設計）。
  */
 export function useUpdateTodo(id: string | undefined) {
   const queryClient = useQueryClient()
@@ -128,7 +147,10 @@ export function useUpdateTodo(id: string | undefined) {
 }
 
 /**
- * Todo を削除する hook（useCreateTodo と同じパターン）
+ * Todo を削除する hook
+ *
+ * useCreateTodo と同じ useMutation + invalidateQueries パターン。
+ * DELETE はリクエストボディなし。mutationFn の引数も不要。
  */
 export function useDeleteTodo(id: string | undefined) {
   const queryClient = useQueryClient()
