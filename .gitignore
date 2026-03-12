@@ -1,0 +1,24 @@
+node_modules
+dist
+dist-ssr
+.next
+.output
+*.local
+*.tsbuildinfo
+next-env.d.ts
+
+# logs
+*.log
+pnpm-debug.log*
+
+# env
+.env*
+
+# OS
+.DS_Store
+
+# editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.sw?
