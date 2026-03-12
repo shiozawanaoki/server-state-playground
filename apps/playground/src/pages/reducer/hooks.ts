@@ -26,30 +26,34 @@ type MutationData = { title: string; description: string; status: TodoStatus }
  *   - 他の hook（useCreateTodo 等）がキャッシュを更新すると、
  *     この hook の返すデータも自動的に最新になる
  *
- * キャッシュ戦略:
- *   常に全件（/api/todos）を fetch して共有キャッシュに保持。
- *   フィルタはクライアント側の useMemo で行う。
- *   → 共有キャッシュのメリット（useTodo でのキャッシュヒット）を活かすには全件が必要
- *   → SWR/TanStack Query ならキーごとにキャッシュを分けるため、この trade-off が不要（比較ポイント）
- *
- * isPending のセマンティクス（useTodo と同様のキャッシュ考慮型）:
- *   共有キャッシュに Todo が1件でもあればスピナーなし（即座に表示）。
- *   キャッシュが空のときだけ fetch 中にスピナーを表示する。
- *   → 全件キャッシュ + useMemo フィルタにより stale-while-revalidate が実現できている。
- *   SWR/TanStack Query との違いは「キャッシュキーの分離がなく単一キャッシュである」点のみ（比較ポイント）。
+ * isPending のセマンティクス:
+ *   単一キャッシュのため stale-while-revalidate はできない。
+ *   vanilla と同じく fetch 中はスピナーを表示する。
+ *   SWR / TanStack Query ではキー別キャッシュにより切り替え時もスピナーが出ない（比較ポイント）。
  */
 export function useTodos(status: TodoStatus | null) {
-  const { todos: allTodos } = useTodosState()
+  const { todos } = useTodosState()
   const dispatch = useTodosDispatch()
-  const [isFetching, setIsFetching] = useState(false)
+  const [isPending, setIsPending] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    setIsFetching(true)
+    // ⚠️ 既知の問題: ここでキャッシュを空にしているため、共有キャッシュの意味がほぼない。
+    //   - 一覧 → 詳細 → 一覧に戻るたびにキャッシュが消えてスピナーが出る
+    //   - useCreateTodo 等で UPSERT_TODO した Todo もクリアされる
+    //   - status フィルタ切り替え時も毎回全消し
+    //
+    // 単純にこの行を消せば「前のフィルタ結果が一瞬見える」問題が出る。
+    // かといって cachedStatus を reducer に持たせると、mutation 時の整合性管理
+    // （例: status="done" のキャッシュに status="todo" の新規 Todo を入れるか？）
+    // を手動で書くことになり、SWR/TanStack Query のキャッシュキー管理を再発明する羽目になる。
+    // → ここが自前キャッシュ管理の限界。ライブラリが必要になる動機そのもの。
+    dispatch({ type: 'SET_TODOS', payload: [] })
+    setIsPending(true)
     setError(null)
-    // 常に全件取得してキャッシュに保持。フィルタはクライアント側で行う
-    fakeFetch('/api/todos')
+    const url = status ? `/api/todos?status=${status}` : '/api/todos'
+    fakeFetch(url)
       .then(async (res) => {
         if (!res.ok) throw new Error('Failed to fetch todos')
         return res.json() as Promise<Todo[]>
@@ -61,21 +65,9 @@ export function useTodos(status: TodoStatus | null) {
         }
       })
       .catch((e: unknown) => { if (!cancelled) setError(String(e)) })
-      .finally(() => { if (!cancelled) setIsFetching(false) })
+      .finally(() => { if (!cancelled) setIsPending(false) })
     return () => { cancelled = true }
-  // status を deps に含めるのは、status 変更時に再 fetch してキャッシュを最新化するため
-  // （ただし URL は常に /api/todos なので同じリクエストが飛ぶ。
-  //  SWR/TanStack Query ならキー別キャッシュで不要な再 fetch を避けられる ← 比較ポイント）
   }, [status, dispatch])
-
-  // 共有キャッシュからクライアント側でフィルタ
-  const todos = useMemo(
-    () => status ? allTodos.filter(t => t.status === status) : allTodos,
-    [allTodos, status]
-  )
-
-  // キャッシュが空のときだけ fetch 中にスピナーを表示（useTodo と同じキャッシュ考慮型）
-  const isPending = allTodos.length === 0 && isFetching
 
   return { todos, isPending, error }
 }

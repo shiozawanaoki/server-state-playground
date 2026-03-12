@@ -4,7 +4,7 @@ import type { Todo } from '@server-state-playground/shared'
 // --- State ---
 
 type TodosState = {
-  todos: Todo[] // 共有キャッシュ。全 Todo を保持する（フィルタ前の全件）
+  todos: Todo[] // 共有キャッシュ。直近の一覧 fetch 結果 + 個別操作で追加・更新された Todo を保持
 }
 
 const initialState: TodosState = {
